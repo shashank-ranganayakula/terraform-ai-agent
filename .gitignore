@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+
+# User/local IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Logs and local run artifacts
+*.log
+
+# InfraAgent generated local output
+InfraAgent.Api/generated-work/
+InfraAgent.Api/generated-repositories/
+
+# Terraform local artifacts and caches
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+terraform-cache-smoke/
+terraform-plugin-cache/
+
+# Codex/local agent metadata
+.agents/
+.codex/
