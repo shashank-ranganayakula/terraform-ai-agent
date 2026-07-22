@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+
+# Angular build and cache output
+.angular/
+dist/
+
+# .NET build output
+bin/
+obj/
+artifacts/
+**/bin/
+**/obj/
+**/artifacts/
+
+# IDE and editor state
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Codex/local agent state
+.agents/
+.codex/
+
+# Logs
+*.log
+*.stdout.log
+*.stderr.log
+
+# Local app configuration and secrets
+InfraAgent.Api/appsettings.json
+InfraAgent.Api/appsettings.Development.json
+*.Development.json
+*.local.json
+.env
+.env.*
+
+# Generated Terraform work and local publish output
+InfraAgent.Api/generated-work/
+InfraAgent.Api/generated-repositories/
+generated-work/
+generated-repositories/
+
+# Terraform local state and provider/plugin caches
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform-plugin-cache/
+terraform-cache-smoke/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store

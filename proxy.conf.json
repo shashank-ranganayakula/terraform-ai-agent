@@ -1,0 +1,15 @@
+{
+  "/api": {
+    "target": "http://localhost:5123",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": {
+      "^/api": ""
+    }
+  },
+  "/generated-repositories": {
+    "target": "http://localhost:5123",
+    "secure": false,
+    "changeOrigin": true
+  }
+}

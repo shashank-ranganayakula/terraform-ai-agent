@@ -1,0 +1,63 @@
+<div class="app">
+  <header>
+    <strong>InfraAgent</strong>
+    <span>Terraform generator</span>
+  </header>
+
+  <main>
+    <div class="welcome" *ngIf="!messages.length">
+      <div class="logo">IA</div>
+      <h1>What infrastructure can I build?</h1>
+      <p>Describe the AWS S3 or EC2 infrastructure you need and I will generate a validated Terraform repository.</p>
+    </div>
+
+    <article *ngFor="let message of messages" [class.user]="message.role === 'user'">
+      <div class="bubble">
+        <div>{{ message.text }}</div>
+
+        <a class="repo-link" *ngIf="message.repositoryLink" [href]="message.repositoryLink" target="_blank" rel="noopener">
+          Open generated README
+        </a>
+
+        <div class="repo-path" *ngIf="message.repositoryUrl">
+          {{ message.repositoryUrl }}
+        </div>
+
+        <section *ngIf="message.filesCreated?.length">
+          <h2>Files created</h2>
+          <ul>
+            <li *ngFor="let file of message.filesCreated">{{ file }}</li>
+          </ul>
+        </section>
+
+        <section *ngIf="message.assumptions?.length">
+          <h2>Assumptions</h2>
+          <ul>
+            <li *ngFor="let assumption of message.assumptions">{{ assumption }}</li>
+          </ul>
+        </section>
+
+        <section *ngIf="message.provisioningStatus">
+          <h2>Provisioning</h2>
+          <div>Status: {{ message.provisioningStatus }}</div>
+          <pre *ngIf="message.provisioningOutput">{{ message.provisioningOutput }}</pre>
+        </section>
+      </div>
+    </article>
+
+    <article *ngIf="loading">
+      <div class="muted">Generating, validating, and publishing Terraform. This can take a few minutes.</div>
+    </article>
+  </main>
+
+  <form (submit)="$event.preventDefault(); send()">
+    <textarea
+      [(ngModel)]="prompt"
+      name="prompt"
+      (keydown)="keydown($event)"
+      placeholder="Create an encrypted S3 bucket for user uploads..."
+    ></textarea>
+    <button [disabled]="loading || !prompt.trim()" type="submit" aria-label="Send">Send</button>
+    <small>Enter to send. Shift + Enter for a new line.</small>
+  </form>
+</div>
