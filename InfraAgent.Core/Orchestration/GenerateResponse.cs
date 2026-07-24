@@ -25,6 +25,9 @@ public sealed record GenerateResponse(
     public static GenerateResponse Failure(string error) =>
         new("failed", null, null, Array.Empty<string>(), string.Empty, Array.Empty<string>(), error);
 
+    public static GenerateResponse PreflightFailure(string error, string output) =>
+        new("failed", null, null, Array.Empty<string>(), string.Empty, Array.Empty<string>(), error, "not_started", output);
+
     public static GenerateResponse PublishFailure(
         string error,
         string output,

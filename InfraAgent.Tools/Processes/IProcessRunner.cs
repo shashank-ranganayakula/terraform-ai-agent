@@ -6,5 +6,6 @@ public interface IProcessRunner
         string fileName,
         string arguments,
         string workingDirectory,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environmentVariables = null);
 }

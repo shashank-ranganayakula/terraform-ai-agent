@@ -27,10 +27,9 @@ $env:OpenAI__ApiKey = "sk-live-2f44385d34cf8a48d77bd95f0e067b946ebef3f1dcfbf492f
 $env:OpenAI__Model = "gpt-4.1-mini"
 $env:Git__GitHubToken = "github_pat_..."
 $env:Git__GitHubOwner = "your-org-or-user"
-$env:Agent__DefaultAwsRegion = "us-east-1"
 ```
 
-Do not put AWS credentials in generated Terraform. Use normal AWS SDK/CLI environment configuration if you intend to run `terraform plan` against real AWS.
+Do not put AWS credentials in generated Terraform. Use normal AWS SDK/CLI environment configuration if you intend to run Terraform against real AWS. Include the AWS region explicitly in each prompt, for example `in us-east-1`.
 
 ## Run
 
@@ -45,7 +44,7 @@ Then call:
 Invoke-RestMethod -Method Post `
   -Uri http://localhost:5000/generate `
   -ContentType 'application/json' `
-  -Body '{"prompt":"Create an S3 bucket for user uploads with versioning enabled, and a t3.medium EC2 instance to run a web server"}'
+  -Body '{"prompt":"Create an S3 bucket for user uploads with versioning enabled in us-east-1, and a t3.medium EC2 instance to run a web server"}'
 ```
 
 If `Git:GitHubToken` is not configured, the response repository URL is a local path under `Git:LocalRepositoryRoot`.

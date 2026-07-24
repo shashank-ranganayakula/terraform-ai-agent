@@ -1,63 +1,238 @@
 <div class="app">
-  <header>
-    <strong>InfraAgent</strong>
-    <span>Terraform generator</span>
+  <header class="app-header">
+    <div class="brand">
+      <strong>InfraAgent</strong>
+      <span>Terraform Generator</span>
+    </div>
+
+    <div class="connection-status" aria-label="Connected to AWS">
+      <span class="status-dot"></span>
+      <span>Connected to AWS</span>
+    </div>
   </header>
 
-  <main>
+  <main class="chat-shell">
     <div class="welcome" *ngIf="!messages.length">
       <div class="logo">IA</div>
       <h1>What infrastructure can I build?</h1>
       <p>Describe the AWS S3 or EC2 infrastructure you need and I will generate a validated Terraform repository.</p>
     </div>
 
-    <article *ngFor="let message of messages" [class.user]="message.role === 'user'">
-      <div class="bubble">
-        <div>{{ message.text }}</div>
-
-        <a class="repo-link" *ngIf="message.repositoryLink" [href]="message.repositoryLink" target="_blank" rel="noopener">
-          Open generated README
-        </a>
-
-        <div class="repo-path" *ngIf="message.repositoryUrl">
-          {{ message.repositoryUrl }}
+    <section class="conversation" aria-label="InfraAgent conversation">
+      <article
+        *ngFor="let message of messages"
+        class="message-row"
+        [class.user]="message.role === 'user'"
+        [class.assistant]="message.role === 'assistant'"
+      >
+        <div class="avatar" aria-hidden="true">
+          <span>{{ message.role === 'user' ? 'U' : 'IA' }}</span>
         </div>
 
-        <section *ngIf="message.filesCreated?.length">
-          <h2>Files created</h2>
-          <ul>
-            <li *ngFor="let file of message.filesCreated">{{ file }}</li>
-          </ul>
-        </section>
+        <div class="bubble">
+          <ng-container *ngIf="message.role === 'user'; else assistantCard">
+            <div>{{ message.text }}</div>
+          </ng-container>
 
-        <section *ngIf="message.assumptions?.length">
-          <h2>Assumptions</h2>
-          <ul>
-            <li *ngFor="let assumption of message.assumptions">{{ assumption }}</li>
-          </ul>
-        </section>
+          <ng-template #assistantCard>
+            <div class="assistant-card">
+              <section class="response-section">
+                <h2>Summary</h2>
+                <p>{{ message.text }}</p>
+              </section>
 
-        <section *ngIf="message.provisioningStatus">
-          <h2>Provisioning</h2>
-          <div>Status: {{ message.provisioningStatus }}</div>
-          <pre *ngIf="message.provisioningOutput">{{ message.provisioningOutput }}</pre>
-        </section>
-      </div>
-    </article>
+              <section class="response-section error-explanation" *ngIf="message.errorExplanation as explanation">
+                <div class="error-heading">
+                  <h2>{{ explanation.title }}</h2>
+                  <span *ngIf="explanation.statusCode">HTTP {{ explanation.statusCode }}</span>
+                </div>
+                <p>{{ explanation.message }}</p>
+                <div class="error-detail" *ngIf="explanation.detail">{{ explanation.detail }}</div>
+                <div class="next-steps" *ngIf="explanation.nextSteps.length">
+                  <strong>Next steps</strong>
+                  <ul>
+                    <li *ngFor="let step of explanation.nextSteps">{{ step }}</li>
+                  </ul>
+                </div>
+              </section>
 
-    <article *ngIf="loading">
-      <div class="muted">Generating, validating, and publishing Terraform. This can take a few minutes.</div>
-    </article>
+              <section class="response-section" *ngIf="message.repositoryUrl || message.repositoryLink">
+                <h2>Generated Repository</h2>
+                <a
+                  class="repo-link"
+                  *ngIf="message.repositoryLink"
+                  [href]="message.repositoryLink"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Open generated GitHub repository
+                </a>
+                <div class="repo-path" *ngIf="message.repositoryUrl">
+                  {{ message.repositoryUrl }}
+                </div>
+              </section>
+
+              <section class="response-section" *ngIf="message.filesCreated?.length">
+                <h2>Files Created</h2>
+                <ul class="file-list">
+                  <li *ngFor="let file of message.filesCreated">{{ file }}</li>
+                </ul>
+              </section>
+
+              <section class="response-section" *ngIf="message.assumptions?.length">
+                <h2>README</h2>
+                <ul class="assumption-list">
+                  <li *ngFor="let assumption of message.assumptions">{{ assumption }}</li>
+                </ul>
+              </section>
+
+              <section class="response-section" *ngIf="message.provisioningStatus">
+                <h2>Provisioning Status</h2>
+                <div class="provisioning-pill" [class.success]="message.provisioningStatus === 'applied'">
+                  {{ message.provisioningStatus }}
+                </div>
+              </section>
+
+              <section class="response-section terraform-apply" *ngIf="message.applySummary as apply">
+                <h2>Terraform Apply</h2>
+
+                <div class="apply-success">
+                  <span aria-hidden="true">&#10003;</span>
+                  <strong>Infrastructure Provisioned Successfully</strong>
+                </div>
+
+                <div class="apply-block" *ngIf="apply.hasS3Bucket || apply.hasPublicAccessBlock || apply.hasEncryption">
+                  <h3>Deployment Result</h3>
+                  <table class="info-table">
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr *ngIf="apply.hasS3Bucket">
+                        <td>Amazon S3 Bucket</td>
+                        <td><span class="status-ok">&#10003;</span> Created</td>
+                      </tr>
+                      <tr *ngIf="apply.hasPublicAccessBlock">
+                        <td>Public Access Block</td>
+                        <td><span class="status-ok">&#10003;</span> Enabled</td>
+                      </tr>
+                      <tr *ngIf="apply.hasEncryption">
+                        <td>Server-side Encryption</td>
+                        <td><span class="status-ok">&#10003;</span> Enabled (AES-256)</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="apply-block">
+                  <h3>Deployment Summary</h3>
+                  <dl class="summary-grid">
+                    <div *ngIf="apply.resourcesCreated !== undefined">
+                      <dt>Resources Created</dt>
+                      <dd>{{ apply.resourcesCreated }}</dd>
+                    </div>
+                    <div *ngIf="apply.resourcesModified !== undefined">
+                      <dt>Resources Modified</dt>
+                      <dd>{{ apply.resourcesModified }}</dd>
+                    </div>
+                    <div *ngIf="apply.resourcesDeleted !== undefined">
+                      <dt>Resources Deleted</dt>
+                      <dd>{{ apply.resourcesDeleted }}</dd>
+                    </div>
+                    <div *ngIf="apply.awsRegion">
+                      <dt>AWS Region</dt>
+                      <dd>{{ apply.awsRegion }}</dd>
+                    </div>
+                    <div *ngIf="apply.bucketName">
+                      <dt>Bucket Name</dt>
+                      <dd>{{ apply.bucketName }}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <div class="apply-block" *ngIf="apply.resourcesCreatedList.length">
+                  <h3>Resources Created</h3>
+                  <ul class="created-resource-list">
+                    <li *ngFor="let resource of apply.resourcesCreatedList">{{ resource }}</li>
+                  </ul>
+                </div>
+
+                <div class="apply-block" *ngIf="apply.hasPublicAccessBlock || apply.hasEncryption">
+                  <h3>Security Configuration</h3>
+                  <ul class="security-list">
+                    <li *ngIf="apply.hasPublicAccessBlock">Public access blocked for the bucket</li>
+                    <li *ngIf="apply.hasEncryption">Server-side encryption enabled using AES-256</li>
+                    <li *ngIf="apply.hasPublicAccessBlock || apply.hasEncryption">Bucket configured following AWS security best practices</li>
+                  </ul>
+                </div>
+
+                <div class="apply-block" *ngIf="apply.outputs.length">
+                  <h3>Outputs</h3>
+                  <table class="info-table">
+                    <thead>
+                      <tr>
+                        <th>Output</th>
+                        <th>Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr *ngFor="let output of apply.outputs">
+                        <td>{{ output.name }}</td>
+                        <td>{{ output.value }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="apply-block" *ngIf="apply.timeline.length">
+                  <h3>Deployment Timeline</h3>
+                  <ul class="timeline-list">
+                    <li *ngFor="let step of apply.timeline">{{ step }}</li>
+                  </ul>
+                </div>
+
+                <button class="raw-log-toggle" type="button" (click)="toggleRawLogs(message)">
+                  {{ message.showRawLogs ? 'Hide Raw Terraform Logs' : 'View Raw Terraform Logs' }}
+                </button>
+                <pre *ngIf="message.showRawLogs">{{ message.provisioningOutput }}</pre>
+              </section>
+
+              <section class="response-section" *ngIf="message.provisioningOutput && !message.applySummary">
+                <h2>Terraform Logs</h2>
+                <pre>{{ message.provisioningOutput }}</pre>
+              </section>
+            </div>
+          </ng-template>
+        </div>
+      </article>
+
+      <article class="loading-card" *ngIf="loading" aria-live="polite">
+        <div class="pulse-dots" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <strong>Generating, validating, and publishing Terraform.</strong>
+        <span>This can take a few minutes.</span>
+      </article>
+    </section>
   </main>
 
-  <form (submit)="$event.preventDefault(); send()">
-    <textarea
-      [(ngModel)]="prompt"
-      name="prompt"
-      (keydown)="keydown($event)"
-      placeholder="Create an encrypted S3 bucket for user uploads..."
-    ></textarea>
-    <button [disabled]="loading || !prompt.trim()" type="submit" aria-label="Send">Send</button>
-    <small>Enter to send. Shift + Enter for a new line.</small>
-  </form>
+  <div class="composer-wrap">
+    <form class="composer" (submit)="$event.preventDefault(); send()">
+      <textarea
+        [(ngModel)]="prompt"
+        name="prompt"
+        (keydown)="keydown($event)"
+        placeholder="Create an encrypted S3 bucket for user uploads..."
+      ></textarea>
+      <button [disabled]="loading || !prompt.trim()" type="submit" aria-label="Send">
+        <span>Send</span>
+      </button>
+      <small>Press Enter to send &bull; Shift + Enter for new line</small>
+    </form>
+  </div>
 </div>

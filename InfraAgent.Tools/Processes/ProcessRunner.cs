@@ -9,7 +9,8 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
         string fileName,
         string arguments,
         string workingDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         Directory.CreateDirectory(workingDirectory);
 
@@ -25,13 +26,30 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
             CreateNoWindow = true
         };
 
+        if (environmentVariables is not null)
+        {
+            foreach (var variable in environmentVariables)
+            {
+                process.StartInfo.Environment[variable.Key] = variable.Value;
+            }
+        }
+
         logger.LogInformation("Running command {FileName} {Arguments} in {WorkingDirectory}", fileName, arguments, workingDirectory);
         logger.LogInformation("Executable: {FileName}", fileName);
         logger.LogInformation("Exists: {Exists}", File.Exists(fileName));
+        var stopwatch = Stopwatch.StartNew();
         process.Start();
         var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
+        stopwatch.Stop();
+
+        logger.LogInformation(
+            "Command {FileName} {Arguments} exited with {ExitCode} in {ElapsedMilliseconds} ms",
+            fileName,
+            arguments,
+            process.ExitCode,
+            stopwatch.ElapsedMilliseconds);
 
         return new CommandResult(
             fileName,

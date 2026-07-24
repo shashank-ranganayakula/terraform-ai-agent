@@ -16,14 +16,27 @@ This file is the source of truth for Phase 1.
 - Fail deterministic validation for public S3 buckets, unencrypted S3 buckets, security group ingress from `0.0.0.0/0` or `::/0`, and IAM wildcard policies.
 - Run Terraform CLI validation and `tfsec`.
 - Retry generation at most three times.
+- Repair attempts reuse one request working directory so Terraform can reuse initialized provider files instead of downloading and installing providers for every retry.
+- Before validation, generated Terraform is deterministically normalized to remove undeclared `.tfvars` assignments and add required S3 encryption/public-access-block defaults when the generated code omits them.
+- User prompts must explicitly include a supported AWS region code. The backend must ask a clarifying question instead of defaulting to a region.
+- Prompt sanity checks must reject likely credentials, destructive operations, unsupported providers/services, unsupported control characters, and overlong requests before LLM generation.
 
 ## AWS Provisioning
 
 - After Terraform is generated and validation passes, the backend publishes the generated Terraform to GitHub, then automatically applies it for the AWS credentials available to the API process.
 - The backend must never run `terraform destroy`.
 - The command flow is intentionally minimal: `terraform fmt`, `terraform init -backend=false`, `terraform validate`, `tflint`, `tfsec`, then `terraform apply -input=false -auto-approve -no-color`.
+- Terraform commands run with `TF_PLUGIN_CACHE_DIR`; if the environment variable is not already set, the backend uses `terraform-plugin-cache` under the API process working directory.
+- After `terraform validate` succeeds, `tflint` and `tfsec` run concurrently because they are independent read-only checks.
 - Terraform state files must remain out of the published generated repository.
-- AWS credentials and region must come from the normal AWS environment/profile used by the API process; generated Terraform must not contain hardcoded AWS credentials.
+- AWS credentials must come from the normal AWS environment/profile used by the API process; generated Terraform must not contain hardcoded AWS credentials. AWS region must come from the validated user prompt.
+
+## API Error Handling
+
+- The API uses a global exception handler.
+- Handled workflow failures keep the existing `GenerateResponse` contract and usually return HTTP `422`.
+- Unexpected exceptions return HTTP `500` with a sanitized `GenerateResponse.Failure` body.
+- Detailed exception information must be logged server-side only and must not be returned to the frontend.
 
 ## Local Demo Mode
 

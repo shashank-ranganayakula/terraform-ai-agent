@@ -3,12 +3,14 @@ using InfraAgent.Core.Generation;
 using InfraAgent.Core.Intent;
 using InfraAgent.Core.Options;
 using InfraAgent.Core.Orchestration;
+using InfraAgent.Core.Preflight;
 using InfraAgent.Core.Provisioning;
 using InfraAgent.Core.Validation;
 using InfraAgent.Tools.Git;
 using InfraAgent.Tools.Processes;
 using InfraAgent.Tools.Security;
 using InfraAgent.Tools.Terraform;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Extensions.FileProviders;
 
 
@@ -31,6 +33,7 @@ builder.Services.AddSingleton<DeterministicSecurityPolicy>();
 builder.Services.AddSingleton<ISecurityScanner, TfsecSecurityScanner>();
 builder.Services.AddSingleton<IInfrastructureValidator, InfrastructureValidator>();
 builder.Services.AddSingleton<IInfrastructureProvisioner, TerraformProvisioner>();
+builder.Services.AddSingleton<IS3BucketAvailabilityChecker, S3BucketAvailabilityChecker>();
 builder.Services.AddSingleton<IInfrastructureAgent, InfrastructureAgent>();
 
 builder.Services.AddSingleton<ITerraformGenerator>(services =>
@@ -60,6 +63,34 @@ builder.Services.AddCors(options =>
 
 
 var app = builder.Build();
+
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+        var logger = context.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("InfraAgent.Api.GlobalExceptionHandler");
+
+        if (exception is not null)
+        {
+            logger.LogError(exception, "Unhandled API exception for {Method} {Path}", context.Request.Method, context.Request.Path);
+        }
+
+        var statusCode = exception is null
+            ? StatusCodes.Status500InternalServerError
+            : GenerateHttpStatusMapper.ForException(exception);
+
+        context.Response.StatusCode = statusCode;
+        context.Response.ContentType = "application/json";
+
+        await context.Response.WriteAsJsonAsync(GenerateResponse.Failure(
+            statusCode == StatusCodes.Status500InternalServerError
+                ? "Unexpected API error. The request was not completed. Check backend logs for the detailed exception."
+                : "The request failed before completion. Review the HTTP status and backend logs for details."));
+    });
+});
 
 app.UseHttpsRedirection();
 app.UseRouting();
@@ -98,18 +129,30 @@ app.MapPost("/generate", async (
     IInfrastructureAgent agent,
     CancellationToken cancellationToken) =>
 {
-    var response = await agent.GenerateAsync(request.Prompt, cancellationToken);
-    return response.Status switch
+    if (string.IsNullOrWhiteSpace(request.Prompt))
     {
-        "clarification_required" => Results.Ok(response),
-        "succeeded" => Results.Ok(response),
-        _ => Results.Json(response, statusCode: StatusCodes.Status422UnprocessableEntity)
-    };
+        return Results.Json(
+            GenerateResponse.Clarification("Describe the AWS S3 or EC2 infrastructure to generate, including a valid AWS region."),
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var response = await agent.GenerateAsync(request.Prompt, cancellationToken);
+    return Results.Json(response, statusCode: GenerateHttpStatusMapper.ForResponse(response));
 })
     .WithName("GenerateInfrastructure")
     .WithTags("Generation")
     .Produces<GenerateResponse>(StatusCodes.Status200OK)
-    .Produces<GenerateResponse>(StatusCodes.Status422UnprocessableEntity);
+    .Produces<GenerateResponse>(StatusCodes.Status400BadRequest)
+    .Produces<GenerateResponse>(StatusCodes.Status401Unauthorized)
+    .Produces<GenerateResponse>(StatusCodes.Status403Forbidden)
+    .Produces<GenerateResponse>(StatusCodes.Status404NotFound)
+    .Produces<GenerateResponse>(StatusCodes.Status409Conflict)
+    .Produces<GenerateResponse>(StatusCodes.Status422UnprocessableEntity)
+    .Produces<GenerateResponse>(StatusCodes.Status429TooManyRequests)
+    .Produces<GenerateResponse>(StatusCodes.Status500InternalServerError)
+    .Produces<GenerateResponse>(StatusCodes.Status502BadGateway)
+    .Produces<GenerateResponse>(StatusCodes.Status503ServiceUnavailable)
+    .Produces<GenerateResponse>(StatusCodes.Status504GatewayTimeout);
 
 app.MapGet("/debug/repos", () =>
 {

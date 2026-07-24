@@ -2,9 +2,11 @@ using InfraAgent.Core.Context;
 using InfraAgent.Core.Generation;
 using InfraAgent.Core.Intent;
 using InfraAgent.Core.Options;
+using InfraAgent.Core.Preflight;
 using InfraAgent.Core.Provisioning;
 using InfraAgent.Core.Validation;
 using InfraAgent.Tools.Git;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -16,6 +18,7 @@ public sealed class InfrastructureAgent(
     ITerraformGenerator terraformGenerator,
     IInfrastructureValidator validator,
     IInfrastructureProvisioner provisioner,
+    IS3BucketAvailabilityChecker s3BucketAvailabilityChecker,
     IGitRepository gitRepository,
     IOptions<AgentOptions> options,
     ILogger<InfrastructureAgent> logger) : IInfrastructureAgent
@@ -29,26 +32,75 @@ public sealed class InfrastructureAgent(
         }
 
         var intent = parseResult.Intent!;
+        var requestStopwatch = Stopwatch.StartNew();
+
+        if (intent.S3Bucket is { } bucket)
+        {
+            var preflightStopwatch = Stopwatch.StartNew();
+            var availability = await s3BucketAvailabilityChecker.CheckAsync(
+                bucket.BucketName,
+                intent.AwsRegion,
+                cancellationToken);
+            preflightStopwatch.Stop();
+
+            logger.LogInformation(
+                "S3 bucket preflight completed in {ElapsedMilliseconds} ms with status {Status}",
+                preflightStopwatch.ElapsedMilliseconds,
+                availability.Status);
+
+            if (availability.Status == S3BucketAvailabilityStatus.Exists)
+            {
+                return GenerateResponse.PreflightFailure(
+                    "S3 bucket name already exists.",
+                    availability.Message);
+            }
+
+            if (availability.Status == S3BucketAvailabilityStatus.CheckFailed)
+            {
+                return GenerateResponse.PreflightFailure(
+                    "S3 bucket availability check failed.",
+                    availability.Message);
+            }
+        }
+
+        var contextStopwatch = Stopwatch.StartNew();
         var context = await contextRetriever.RetrieveAsync(intent, cancellationToken);
+        contextStopwatch.Stop();
+        logger.LogInformation("Context retrieval completed in {ElapsedMilliseconds} ms", contextStopwatch.ElapsedMilliseconds);
+
         string? repairInstructions = null;
         ValidationResult? finalValidation = null;
         GeneratedTerraform? finalTerraform = null;
-        string? finalDirectory = null;
+        var finalDirectory = CreateWorkingDirectory();
 
         for (var attempt = 1; attempt <= options.Value.MaxRepairAttempts; attempt++)
         {
             logger.LogInformation("Generating Terraform attempt {Attempt} of {MaxAttempts}", attempt, options.Value.MaxRepairAttempts);
+            var generationStopwatch = Stopwatch.StartNew();
             var terraform = TerraformVariablePruner.PruneUnusedVariables(
-                await terraformGenerator.GenerateAsync(intent, context, repairInstructions, cancellationToken));
-            var workingDirectory = CreateWorkingDirectory();
-            await WriteTerraformFilesAsync(workingDirectory, terraform, cancellationToken);
+                TerraformSecurityDefaults.EnsureS3Defaults(
+                    await terraformGenerator.GenerateAsync(intent, context, repairInstructions, cancellationToken)));
+            generationStopwatch.Stop();
+            logger.LogInformation(
+                "Terraform generation attempt {Attempt} completed in {ElapsedMilliseconds} ms",
+                attempt,
+                generationStopwatch.ElapsedMilliseconds);
 
-            var validation = await validator.ValidateAsync(workingDirectory, cancellationToken);
+            ClearGeneratedSourceFiles(finalDirectory);
+            await WriteTerraformFilesAsync(finalDirectory, terraform, cancellationToken);
+
+            var validationStopwatch = Stopwatch.StartNew();
+            var validation = await validator.ValidateAsync(finalDirectory, cancellationToken);
+            validationStopwatch.Stop();
+            logger.LogInformation(
+                "Validation attempt {Attempt} completed in {ElapsedMilliseconds} ms with status {Status}",
+                attempt,
+                validationStopwatch.ElapsedMilliseconds,
+                validation.Succeeded ? "succeeded" : "failed");
             if (validation.Succeeded)
             {
                 finalTerraform = terraform;
                 finalValidation = validation;
-                finalDirectory = workingDirectory;
                 break;
             }
 
@@ -71,6 +123,7 @@ public sealed class InfrastructureAgent(
         RepositoryPublishResult publishResult;
         try
         {
+            var publishStopwatch = Stopwatch.StartNew();
             publishResult = await gitRepository.PublishAsync(
                 new RepositoryPublishRequest(
                     finalDirectory,
@@ -78,6 +131,8 @@ public sealed class InfrastructureAgent(
                     $"infra-agent: generate {string.Join(",", intent.ResourceKinds)}",
                     finalTerraform.Summary),
                 cancellationToken);
+            publishStopwatch.Stop();
+            logger.LogInformation("Repository publishing completed in {ElapsedMilliseconds} ms", publishStopwatch.ElapsedMilliseconds);
         }
         catch (InvalidOperationException ex)
         {
@@ -89,7 +144,10 @@ public sealed class InfrastructureAgent(
                 assumptions);
         }
 
+        var provisioningStopwatch = Stopwatch.StartNew();
         var provisioning = await provisioner.ProvisionAsync(finalDirectory, cancellationToken);
+        provisioningStopwatch.Stop();
+        logger.LogInformation("Terraform provisioning completed in {ElapsedMilliseconds} ms", provisioningStopwatch.ElapsedMilliseconds);
         if (!provisioning.Succeeded)
         {
             return GenerateResponse.ProvisioningFailure(
@@ -100,6 +158,9 @@ public sealed class InfrastructureAgent(
                 finalTerraform.Summary,
                 assumptions);
         }
+
+        requestStopwatch.Stop();
+        logger.LogInformation("Generate request completed in {ElapsedMilliseconds} ms", requestStopwatch.ElapsedMilliseconds);
 
         return GenerateResponse.Success(
             publishResult.RepositoryUrl,
@@ -114,6 +175,51 @@ public sealed class InfrastructureAgent(
         var directory = Path.Combine(options.Value.WorkingRoot, DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff"));
         Directory.CreateDirectory(directory);
         return directory;
+    }
+
+    private static void ClearGeneratedSourceFiles(string workingDirectory)
+    {
+        if (!Directory.Exists(workingDirectory))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(workingDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(workingDirectory, file);
+            if (IsPreservedTerraformPath(relativePath))
+            {
+                continue;
+            }
+
+            File.Delete(file);
+        }
+
+        foreach (var directory in Directory
+            .EnumerateDirectories(workingDirectory, "*", SearchOption.AllDirectories)
+            .OrderByDescending(path => path.Length))
+        {
+            var relativePath = Path.GetRelativePath(workingDirectory, directory);
+            if (IsPreservedTerraformPath(relativePath))
+            {
+                continue;
+            }
+
+            if (!Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory);
+            }
+        }
+    }
+
+    private static bool IsPreservedTerraformPath(string relativePath)
+    {
+        var normalized = relativePath.Replace('\\', '/');
+        return normalized.Equals(".terraform.lock.hcl", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals(".terraform", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith(".terraform/", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals(".git", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith(".git/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task WriteTerraformFilesAsync(string workingDirectory, GeneratedTerraform terraform, CancellationToken cancellationToken)

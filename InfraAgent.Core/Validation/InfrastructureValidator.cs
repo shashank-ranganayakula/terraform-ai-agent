@@ -22,20 +22,35 @@ public sealed class InfrastructureValidator(
         var validate = await terraformRunner.ValidateAsync(workingDirectory, cancellationToken);
         output.AppendLine(validate.CombinedOutput);
         if (!validate.Succeeded) return ValidationResult.Failure(output.ToString());
-        CommandResult lint;
-        try
-        {
-            lint = await tflintRunner.LintAsync(workingDirectory, cancellationToken);
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
-        {
-            return ValidationResult.Failure($"tflint is required and must be available on PATH: {ex.Message}");
-        }
+
+        var lintTask = LintAsync(workingDirectory, cancellationToken);
+        var scanTask = securityScanner.ScanAsync(workingDirectory, cancellationToken);
+        await Task.WhenAll(lintTask, scanTask);
+
+        var lint = await lintTask;
         output.AppendLine(lint.CombinedOutput);
         if (!lint.Succeeded) return ValidationResult.Failure(output.ToString());
-        var scan = await securityScanner.ScanAsync(workingDirectory, cancellationToken);
+
+        var scan = await scanTask;
         if (!scan.Passed) { output.AppendLine(scan.ToErrorText()); return ValidationResult.Failure(output.ToString()); }
         output.AppendLine("Terraform plan skipped; generation-only mode is enabled.");
         return ValidationResult.Success(output.ToString());
+    }
+
+    private async Task<CommandResult> LintAsync(string workingDirectory, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await tflintRunner.LintAsync(workingDirectory, cancellationToken);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            return new CommandResult(
+                "tflint",
+                "--no-color",
+                1,
+                string.Empty,
+                $"tflint is required and must be available on PATH: {ex.Message}");
+        }
     }
 }
